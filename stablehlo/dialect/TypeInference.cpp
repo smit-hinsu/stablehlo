@@ -357,8 +357,7 @@ LogicalResult verifyReplicaGroups(Optional<Location> location,
 LogicalResult verifyReducerShape(
     Optional<Location> loc, Block& block, ArrayRef<TensorType> inputArgTypes,
     ArrayRef<TensorType> initValueTypes, int64_t numInputs,
-    ArrayRef<int64_t> allowedDimensions, bool allInputsUnranked,
-    SmallVectorImpl<TensorType>& accumulatorSubShapes) {
+    ArrayRef<int64_t> allowedDimensions, bool allInputsUnranked) {
   // Check that the number of reduction-region arguments matches with that of
   // reduce-op's arguments.
   if (static_cast<int64_t>(block.getArguments().size()) != numInputs * 2)
@@ -380,6 +379,7 @@ LogicalResult verifyReducerShape(
                              block.getTerminator()->getOperands().size(),
                              " instead");
 
+  SmallVector<TensorType> accumulatorSubShapes;
   for (Value retOperand : block.getTerminator()->getOperands()) {
     auto tensorTy = retOperand.getType().dyn_cast<TensorType>();
     if (!tensorTy)
@@ -1052,18 +1052,16 @@ LogicalResult inferReduceOp(
   }
 
   Block& block = body.front();
-  SmallVector<TensorType> accumulatorResultTypes;
   if (failed(verifyReducerShape(location, block, inputArgTypes, initValueTypes,
-                                numInputs, newDimensions, allInputsUnranked,
-                                accumulatorResultTypes)))
+                                numInputs, newDimensions, allInputsUnranked)))
     return failure();
 
-  for (auto resultType : accumulatorResultTypes) {
+  for (uint64_t inputIdx = 0; inputIdx < numInputs; ++inputIdx) {
+    Type elementType = inputType.getElementType();
     if (resultType.isa<RankedTensorType>())
-      inferredReturnShapes.emplace_back(newDimensions,
-                                        resultType.getElementType());
+      inferredReturnShapes.emplace_back(newDimensions, elementType);
     else
-      inferredReturnShapes.emplace_back(resultType.getElementType());
+      inferredReturnShapes.emplace_back(elementType);
   }
 
   return success();
@@ -1149,10 +1147,8 @@ LogicalResult inferReduceWindowOp(
 
   // P5.
   Block& block = body.front();
-  SmallVector<TensorType> accumulatorSubshapes;
   if (failed(verifyReducerShape(location, block, inputArgTypes, initValueTypes,
-                                numInputs, *windowDimsOrErr, allInputsUnranked,
-                                accumulatorSubshapes)))
+                                numInputs, *windowDimsOrErr, allInputsUnranked)))
     return failure();
 
   for (size_t i = 0; i < inputArgTypes.size(); ++i) {
